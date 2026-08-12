@@ -1,0 +1,106 @@
+name: Request Shipwright BuildRun
+
+on:
+  workflow_call:
+    inputs:
+      build:
+        description: Flux-managed Shipwright Build name
+        required: true
+        type: string
+      namespace:
+        description: Namespace containing the Build
+        required: false
+        default: shipwright-builds
+        type: string
+      revision:
+        description: Immutable git revision passed to the build strategy
+        required: true
+        type: string
+      runner:
+        description: ARC runner label with scoped BuildRun RBAC
+        required: false
+        default: arc-runners-darren-iac
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: buildrun-${{ github.repository }}-${{ inputs.build }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 40
+    steps:
+      - name: Install kubectl v1.35.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/bin"
+          mkdir -p "${install_dir}"
+          curl -fsSLo "${install_dir}/kubectl" https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl
+          echo 'a2e984a18a0c063279d692533031c1eff93a262afcc0afdc517375432d060989  '"${install_dir}/kubectl" | sha256sum --check
+          chmod 0755 "${install_dir}/kubectl"
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+
+      - name: Wait for declarative Build
+        shell: bash
+        env:
+          BUILD_NAME: ${{ inputs.build }}
+          BUILD_NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            if kubectl -n "${BUILD_NAMESPACE}" get build "${BUILD_NAME}" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Shipwright Build/${BUILD_NAME} did not reconcile within 10 minutes" >&2
+          exit 1
+
+      - name: Create and follow BuildRun
+        shell: bash
+        env:
+          BUILD_NAME: ${{ inputs.build }}
+          BUILD_NAMESPACE: ${{ inputs.namespace }}
+          BUILD_REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          buildrun=$(kubectl create -f - -o name <<EOF
+          apiVersion: shipwright.io/v1beta1
+          kind: BuildRun
+          metadata:
+            generateName: ${BUILD_NAME}-
+            namespace: ${BUILD_NAMESPACE}
+          spec:
+            build:
+              name: ${BUILD_NAME}
+            paramValues:
+              - name: image-revision
+                value: ${BUILD_REVISION}
+          EOF
+          )
+          name=${buildrun#*/}
+          echo "Started ${buildrun}"
+
+          for _ in $(seq 1 180); do
+            status=$(kubectl -n "${BUILD_NAMESPACE}" get buildrun "${name}" -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}')
+            reason=$(kubectl -n "${BUILD_NAMESPACE}" get buildrun "${name}" -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].reason}')
+            if [ "${status}" = "True" ]; then
+              digest=$(kubectl -n "${BUILD_NAMESPACE}" get buildrun "${name}" -o jsonpath='{.status.output.digest}')
+              echo "BuildRun ${name} produced ${digest}"
+              exit 0
+            fi
+            if [ "${status}" = "False" ]; then
+              echo "BuildRun failed: ${reason}" >&2
+              taskrun=$(kubectl -n "${BUILD_NAMESPACE}" get buildrun "${name}" -o jsonpath='{.status.taskRunName}')
+              kubectl -n "${BUILD_NAMESPACE}" logs "taskrun/${taskrun}" --all-containers --tail=300 || true
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "BuildRun did not finish within 30 minutes" >&2
+          exit 1
