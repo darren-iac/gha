@@ -2,7 +2,9 @@ name: Build immutable image
 
 # Organization-wide image build contract. Source repositories own tests and
 # decide when this workflow runs; darren-iac/iac owns image selection and
-# deployment through Flux image automation.
+# deployment through Flux image automation. Before any push, the workflow
+# creates a missing Docker Hub repository privately and fails closed if an
+# existing repository is public.
 
 on:
   workflow_call:
@@ -106,6 +108,12 @@ jobs:
           fi
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "Building docker.io/${{ inputs.image }}:${tag}"
+
+      - name: Ensure Docker Hub repository is private
+        uses: darren-iac/gha/.github/actions/ensure-dockerhub-private@560760c2f2d4c7458d95b431a69372f0f3ecbaf2
+        with:
+          repo: ${{ inputs.image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4

@@ -14,3 +14,9 @@ pin workflow calls to a full commit SHA.
   `latest` or a mutable branch tag. Callers normally use the shared
   `arc-runners-darren-iac` pool; a different runner requires a real capability
   boundary such as Brainiac's machine-bound workload.
+
+  Before Buildx runs, the workflow calls the pinned
+  `ensure-dockerhub-private` action. A missing repository is created with
+  `is_private: true` and read back to prove its visibility. An existing private
+  repository is a no-op. An existing public repository fails the build before
+  any push; the workflow never relies on Docker Hub's default visibility.
