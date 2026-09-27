@@ -36,6 +36,13 @@ on:
         required: false
         default: ''
         type: string
+      upstream-repo:
+        description: >-
+          Optional Git repository for a named `upstream` context. The workflow
+          reads its pinned 40-character SHA from <context>/docker-bake.hcl.
+        required: false
+        default: ''
+        type: string
       target:
         description: Optional Dockerfile target stage
         required: false
@@ -107,6 +114,23 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - id: upstream
+        name: Resolve pinned upstream build context
+        if: inputs.upstream-repo != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          bake_file="${{ inputs.context }}/docker-bake.hcl"
+          ref=$(grep -E '^\s*default\s*=' "${bake_file}" \
+            | grep -E '[0-9a-f]{40}' \
+            | head -1 \
+            | sed -E 's/.*"([0-9a-f]{40})".*/\1/')
+          if [[ ! "${ref}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not parse a full upstream SHA from ${bake_file}" >&2
+            exit 1
+          fi
+          echo "context=upstream=${{ inputs.upstream-repo }}#${ref}" >> "${GITHUB_OUTPUT}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
@@ -118,7 +142,9 @@ jobs:
           file: ${{ inputs.dockerfile }}
           platforms: ${{ inputs.platforms }}
           build-args: ${{ inputs.build-args }}
-          build-contexts: ${{ inputs.build-contexts }}
+          build-contexts: |
+            ${{ inputs.build-contexts }}
+            ${{ steps.upstream.outputs.context }}
           target: ${{ inputs.target }}
           push: true
           tags: docker.io/${{ inputs.image }}:${{ steps.meta.outputs.tag }}
