@@ -110,7 +110,7 @@ jobs:
           echo "Building docker.io/${{ inputs.image }}:${tag}"
 
       - name: Ensure Docker Hub repository is private
-        uses: darren-iac/gha/.github/actions/ensure-dockerhub-private@560760c2f2d4c7458d95b431a69372f0f3ecbaf2
+        uses: darren-iac/gha/.github/actions/ensure-dockerhub-private@a5d9c5768c262370b5b64eeefbf1948d513be71c
         with:
           repo: ${{ inputs.image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
