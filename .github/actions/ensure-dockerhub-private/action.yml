@@ -1,0 +1,20 @@
+name: Ensure Docker Hub repository is private
+description: Create a missing Docker Hub repository privately and fail closed if an existing repository is public.
+
+inputs:
+  repo:
+    description: "Target repository as '<namespace>/<name>'"
+    required: true
+  dockerhub-token:
+    description: Docker Hub access token used by the image build
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify private repository
+      shell: bash
+      env:
+        DOCKERHUB_REPO: ${{ inputs.repo }}
+        DOCKERHUB_TOKEN: ${{ inputs.dockerhub-token }}
+      run: python3 "${GITHUB_ACTION_PATH}/ensure_private.py"
