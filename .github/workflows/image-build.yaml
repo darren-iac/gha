@@ -50,6 +50,15 @@ on:
         required: false
         default: ''
         type: string
+      tag:
+        description: >-
+          Optional immutable candidate tag supplied by a coordinating caller.
+          It must end in the caller's full commit SHA. Candidate tags are
+          intentionally excluded from Flux ImagePolicy filters until a later
+          bundle-promotion job publishes the release tag.
+        required: false
+        default: ''
+        type: string
       runner:
         description: Runner label; override only for a capability-specific pool
         required: false
@@ -101,7 +110,14 @@ jobs:
             echo "GITHUB_SHA is not a full commit SHA: ${GITHUB_SHA}" >&2
             exit 1
           fi
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+          requested_tag="${{ inputs.tag }}"
+          if [[ -n "${requested_tag}" ]]; then
+            tag="${requested_tag}"
+            if [[ ! "${tag}" =~ ^candidate-[0-9]+-${GITHUB_SHA}$ ]]; then
+              echo "Coordinated tag must match candidate-<run-id>-${GITHUB_SHA}: ${tag}" >&2
+              exit 1
+            fi
+          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             tag="pr-${{ github.event.pull_request.number }}-${GITHUB_SHA}"
           else
             tag="git-$(date -u +%s)-${GITHUB_SHA}"
