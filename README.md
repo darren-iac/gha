@@ -20,3 +20,10 @@ pin workflow calls to a full commit SHA.
   `is_private: true` and read back to prove its visibility. An existing private
   repository is a no-op. An existing public repository fails the build before
   any push; the workflow never relies on Docker Hub's default visibility.
+- Multi-image releases pass a shared `candidate-<run-id>-<full-commit-sha>` tag
+  to each `image-build.yaml` call. Flux ignores candidates. After every build
+  succeeds, `image-promote-bundle.yaml` applies one shared
+  `git-<unix-seconds>-<full-commit-sha>` tag to the exact output digests. This
+  prevents a failed coordinated build from becoming deployable. Because Docker
+  Hub repositories cannot be updated atomically, the consumer repository must
+  also enforce release parity in CI before merging Flux's promotion PR.

@@ -1,0 +1,126 @@
+name: Promote immutable image bundle
+
+# Build jobs publish candidate-* tags that Flux ignores. A caller invokes this
+# workflow only after every build job succeeds. All images then receive one
+# shared git-<unix>-<full-sha> release tag. A repository's release-parity check
+# remains the final guard if Flux observes the independent registry updates at
+# different instants.
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: >-
+          JSON array of {"image":"owner/repository","digest":"sha256:..."}
+          objects produced by successful image-build.yaml jobs
+        required: true
+        type: string
+      runner:
+        description: Runner label; override only for a capability-specific pool
+        required: false
+        default: arc-runners-darren-iac
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+    outputs:
+      tag:
+        description: Shared immutable release tag published for every image
+        value: ${{ jobs.prepare.outputs.tag }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-promotion-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - id: release
+        name: Validate bundle and compute shared release tag
+        env:
+          IMAGES: ${{ inputs.images }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "GITHUB_SHA is not a full commit SHA: ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          images = json.loads(os.environ["IMAGES"])
+          if not isinstance(images, list) or not images:
+              raise SystemExit("images must be a non-empty JSON array")
+          seen = set()
+          for item in images:
+              if not isinstance(item, dict) or set(item) != {"image", "digest"}:
+                  raise SystemExit("each image must contain exactly image and digest")
+              image = item["image"]
+              digest = item["digest"]
+              if not re.fullmatch(r"[a-z0-9]+(?:[._-][a-z0-9]+)*/[a-z0-9]+(?:[._-][a-z0-9]+)*", image):
+                  raise SystemExit(f"invalid Docker Hub image: {image}")
+              if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  raise SystemExit(f"invalid OCI digest for {image}: {digest}")
+              if image in seen:
+                  raise SystemExit(f"duplicate image in bundle: {image}")
+              seen.add(image)
+          PY
+          tag="git-$(date -u +%s)-${GITHUB_SHA}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "Promoting ${tag}"
+
+  promote:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.images) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Ensure Docker Hub repository is private
+        uses: darren-iac/gha/.github/actions/ensure-dockerhub-private@a5d9c5768c262370b5b64eeefbf1948d513be71c
+        with:
+          repo: ${{ matrix.image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Publish gated release tag
+        env:
+          IMAGE: ${{ matrix.image }}
+          DIGEST: ${{ matrix.digest }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "docker.io/${IMAGE}:${RELEASE_TAG}" \
+            "docker.io/${IMAGE}@${DIGEST}"
+          resolved=$(docker buildx imagetools inspect \
+            "docker.io/${IMAGE}:${RELEASE_TAG}" \
+            --format '{{json .Manifest.Digest}}' | tr -d '"')
+          if [[ "${resolved}" != "${DIGEST}" ]]; then
+            echo "Release tag resolved to ${resolved}, expected ${DIGEST}" >&2
+            exit 1
+          fi
+          echo "Promoted docker.io/${IMAGE}:${RELEASE_TAG}@${DIGEST}"
