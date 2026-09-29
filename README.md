@@ -16,9 +16,11 @@ pin workflow calls to a full commit SHA.
   boundary such as Brainiac's machine-bound workload.
 
   Credentials are chosen by event, never by the caller. Callers pass
-  `secrets: inherit`; the darren-iac organization secrets `DOCKERHUB_USERNAME`,
+  `secrets: inherit`; the repository secrets `DOCKERHUB_USERNAME`,
   `DOCKERHUB_READ_TOKEN` and `DOCKERHUB_WRITE_TOKEN` supply them (managed in
-  darren-iac/iac `tofu/github`). A `pull_request` build logs in read-only,
+  darren-iac/iac `tofu/github`). They are repository secrets, not organization
+  secrets: on GitHub Free, organization secrets never reach a private
+  repository. A `pull_request` build logs in read-only,
   imports the cache and builds every stage, but pushes nothing, writes no cache
   and creates no repository, so untrusted PR code cannot touch the registry. A
   trusted build logs in with the write token and fails closed if it is absent.
