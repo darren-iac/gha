@@ -12,8 +12,9 @@ name: Build immutable image
 #                    untrusted, and a write token would let it poison the shared
 #                    :buildcache that trusted builds import.
 #   anything else -> DOCKERHUB_WRITE_TOKEN. Push the immutable tag and the cache.
-# Callers pass `secrets: inherit`; the darren-iac organization secrets supply
-# all three values (darren-iac/iac tofu/github/dockerhub_ci_credentials.tf).
+# Callers pass `secrets: inherit`; per-repository secrets supply all three
+# values (darren-iac/iac tofu/github/dockerhub_ci_credentials.tf). Not
+# organization secrets: on GitHub Free those never reach a private repository.
 
 on:
   workflow_call:
